@@ -62,9 +62,11 @@ const DashboardPage = () => {
   if (loading) return null;
 
   return (
-    <div className="min-h-full">
+    <div className="min-h-full pb-10">
       <DashboardHeader user={adaptedUser} />
-      <DashboardTable isArchive={false} />
+      <div className="mt-12 md:mt-16">
+        <DashboardTable isArchive={false} />
+      </div>
     </div>
   );
 };

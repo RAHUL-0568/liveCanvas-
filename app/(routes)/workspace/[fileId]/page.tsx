@@ -1,5 +1,5 @@
 "use client";
-import React, { Suspense, useState } from "react";
+import React, { Suspense, useState, useEffect, useRef } from "react";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -9,10 +9,8 @@ import WorkSpaceHeader from "../_components/WorkSpaceHeader";
 import dynamic from "next/dynamic";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { FILE } from "../../dashboard/_components/DashboardTable";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
-import { useEffect } from "react";
 
 const Editor = dynamic(() => import("../_components/Editor"), {
   ssr: false,
@@ -26,6 +24,7 @@ const Workspace = ({ params }: any) => {
   const { user, loading } = useAuth();
   const router = useRouter();
   const addContributor = useMutation(api.files.addContributor);
+  const updateLastAccessed = useMutation(api.files.updateLastAccessed);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -35,15 +34,23 @@ const Workspace = ({ params }: any) => {
 
   // Use Convex query hook instead of manual state
   const fileData = useQuery(api.files.getFilebyId, { _id: params.fileId });
+  
+  // Track initialization to avoid redundant calls during the same session
+  const hasInitialized = useRef(false);
 
   useEffect(() => {
-    if (user?.email && fileData) {
+    if (user?.email && !hasInitialized.current) {
+      hasInitialized.current = true;
+      
+      // These are one-time operations when entering the workspace
       addContributor({
         _id: params.fileId,
         email: user.email,
       });
+      
+      updateLastAccessed({ _id: params.fileId as any });
     }
-  }, [user, fileData, params.fileId]);
+  }, [user?.email, params.fileId, addContributor, updateLastAccessed]);
 
   const Tabs = [
     {

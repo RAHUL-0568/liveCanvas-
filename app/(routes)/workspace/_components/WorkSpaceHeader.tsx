@@ -23,13 +23,14 @@ import {
   Columns
 } from "lucide-react";
 import Link from "next/link";
-import React from "react";
+import React, { useState } from "react";
 import { toast } from "sonner";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Loader2 } from "lucide-react";
 
 const WorkSpaceHeader = ({
   Tabs,
@@ -38,6 +39,32 @@ const WorkSpaceHeader = ({
   onSave,
   file,
 }: any) => {
+  const [isSharing, setIsSharing] = useState(false);
+
+  const handleShare = async () => {
+    if (!file?._id) return;
+    setIsSharing(true);
+    
+    try {
+      const response = await fetch("/api/network-ip");
+      const data = await response.json();
+      const networkUrl = `http://${data.ip}:${data.port}/workspace/${file._id}`;
+      
+      await navigator.clipboard.writeText(networkUrl);
+      toast.success("Link copied to clipboard!", {
+        description: networkUrl
+      });
+    } catch (error) {
+      console.error("Share error:", error);
+      const fallbackUrl = `${window.location.origin}/workspace/${file._id}`;
+      await navigator.clipboard.writeText(fallbackUrl);
+      toast.success("Link copied!", {
+        description: fallbackUrl
+      });
+    } finally {
+      setIsSharing(false);
+    }
+  };
   return (
     <div className="border-b border-border h-14 flex items-center px-2 sm:px-4 w-full bg-background/95 backdrop-blur sticky top-0 z-50">
       {/* Breadcrumbs and File Name */}
@@ -136,15 +163,15 @@ const WorkSpaceHeader = ({
 
         <Button
           size="sm"
-          onClick={() => {
-            if (!file?._id) return;
-            const url = `${window.location.origin}/workspace/${file._id}`;
-            navigator.clipboard.writeText(url);
-            toast.success("Link copied!");
-          }}
+          onClick={handleShare}
+          disabled={isSharing}
           className="h-8 sm:h-9 gap-1.5 px-2 sm:px-4 shadow-sm"
         >
-          <Share2 size={14} />
+          {isSharing ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <Share2 size={14} />
+          )}
           <span className="hidden sm:inline text-xs">Share</span>
         </Button>
 

@@ -71,6 +71,9 @@ const Editor = ({
         checklist: checkList,
       },
       data: fileData.document ? JSON.parse(fileData.document) : document,
+      onChange: () => {
+        handleAutoSave();
+      }
     });
 
     try {
@@ -82,6 +85,17 @@ const Editor = ({
     }
   };
 
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleAutoSave = () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = setTimeout(() => {
+      onDocumentSave(true);
+    }, 2000);
+  };
+
   // Initialize editor only once per file
   useEffect(() => {
     if (fileData && !editorInitializedRef.current) {
@@ -89,6 +103,9 @@ const Editor = ({
     }
 
     return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
       if (ref.current) {
         try {
           ref.current.destroy();
@@ -101,22 +118,29 @@ const Editor = ({
   }, [fileId]); // Only reinit on fileId change, not on every fileData update
 
   useEffect(() => {
-    onDocumentSave();
+    if (onSaveTrigger !== undefined && onSaveTrigger !== null) {
+      onDocumentSave(false);
+    }
   }, [onSaveTrigger]);
 
-  const onDocumentSave = async () => {
+  const onDocumentSave = async (isAutoSave = false) => {
     if (ref.current) {
       try {
         const savedData = await ref.current.save();
+        
+        // Don't save if there's no content change for auto-saves
+        const documentJson = JSON.stringify(savedData);
+        
         await updateDocument({
           _id: fileId,
-          document: JSON.stringify(savedData),
+          document: documentJson,
           contributor: user?.email || undefined,
         });
-        toast.success("Document Saved");
+        
+        toast.success(isAutoSave ? "Auto-saved" : "Document Saved");
       } catch (e) {
         console.error("Error saving document:", e);
-        toast.error("Error saving document");
+        if (!isAutoSave) toast.error("Failed to save document");
       }
     }
   };

@@ -10,6 +10,7 @@
 
 import type * as excalidrawFiles from "../excalidrawFiles.js";
 import type * as files from "../files.js";
+import type * as folders from "../folders.js";
 import type * as teams from "../teams.js";
 import type * as user from "../user.js";
 
@@ -22,6 +23,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   excalidrawFiles: typeof excalidrawFiles;
   files: typeof files;
+  folders: typeof folders;
   teams: typeof teams;
   user: typeof user;
 }>;

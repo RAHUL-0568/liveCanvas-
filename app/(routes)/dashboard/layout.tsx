@@ -20,6 +20,8 @@ export default function DashboardLayout({
   const [fileList, setFileList] = useState([] as any[]);
   const [activeTeam, setActiveTeam] = useState<Team | undefined>();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [selectedMenu, setSelectedMenu] = useState("all");
+  const [selectedFolder, setSelectedFolder] = useState<any>();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -58,6 +60,10 @@ export default function DashboardLayout({
           setActiveTeam,
           isMobileMenuOpen,
           setIsMobileMenuOpen,
+          selectedMenu,
+          setSelectedMenu,
+          selectedFolder,
+          setSelectedFolder,
         }}
       >
         <div className="flex h-full relative">

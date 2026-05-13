@@ -6,6 +6,16 @@ export interface Team {
   createdBy: string;
 }
 
+export type MenuType = "all" | "recent" | "created-by-me";
+
+export interface Folder {
+  _id: string;
+  name: string;
+  teamId: string;
+  createdBy: string;
+  _creationTime: number;
+}
+
 interface FileListContextType {
   fileList: any[];
   setFileList: Dispatch<SetStateAction<any[]>>;
@@ -13,6 +23,10 @@ interface FileListContextType {
   setActiveTeam: Dispatch<SetStateAction<Team | undefined>>;
   isMobileMenuOpen: boolean;
   setIsMobileMenuOpen: Dispatch<SetStateAction<boolean>>;
+  selectedMenu: MenuType;
+  setSelectedMenu: Dispatch<SetStateAction<MenuType>>;
+  selectedFolder: Folder | undefined;
+  setSelectedFolder: Dispatch<SetStateAction<Folder | undefined>>;
 }
 
 export const FileListContext = createContext<any>(undefined);

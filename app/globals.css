@@ -65,6 +65,17 @@
     --ring: 240 4.9% 83.9%;
   }
 }
+
+@layer components {
+  .glass-panel {
+    @apply bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border border-white/20 dark:border-slate-800/20 shadow-2xl;
+  }
+
+  .canvas-grid {
+    background-image: radial-gradient(circle, hsl(var(--border)) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+}
  
 @layer base {
   * {

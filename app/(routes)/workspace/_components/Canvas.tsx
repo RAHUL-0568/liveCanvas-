@@ -1,5 +1,5 @@
 "use client";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { Excalidraw, MainMenu, WelcomeScreen } from "@excalidraw/excalidraw";
 import { FILE } from "../../dashboard/_components/DashboardTable";
 import { useMutation, useQuery } from "convex/react";
@@ -11,7 +11,7 @@ import { useAuth } from "@/hooks/useAuth";
 import AIPromptDialog from "./AIPromptDialog";
 
 if (typeof window !== "undefined") {
-  (window as any).EXCALIDRAW_ASSET_PATH = "/";
+  (window as any).EXCALIDRAW_ASSET_PATH = "/excalidraw-assets/";
 }
 
 const Canvas = ({
@@ -26,67 +26,115 @@ const Canvas = ({
   const { user } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const [whiteBoard, setWhiteBoard] = useState<any>();
   const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
   const { resolvedTheme } = useTheme();
   const canvasTheme: "light" | "dark" =
     resolvedTheme === "dark" ? "dark" : "light";
 
-  // useRef avoids triggering re-renders when the API is set,
-  // which previously caused infinite update loops
-  const excalidrawAPIRef = useRef<any>(null);
+  const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
   const onExcalidrawAPI = useCallback((api: any) => {
-    excalidrawAPIRef.current = api;
+    setExcalidrawAPI(api);
   }, []);
 
-  const searchParams = useSearchParams();
-  const isImportingRef = useRef(false);
-  const lastSavedWhiteboardRef = useRef<string>("");
-  const isFirstSyncRef = useRef(true);
-
-  // Helper to load library from localStorage into Excalidraw
+  // Library sync
   const applyLibraryFromStorage = useCallback(async () => {
-    if (!excalidrawAPIRef.current) return;
-    
+    if (!excalidrawAPI) return;
     try {
       const stored = localStorage.getItem('excalidraw-library');
       if (stored) {
         const parsed = JSON.parse(stored);
         const items = parsed.libraryItems || parsed.library || [];
-
         if (Array.isArray(items) && items.length > 0) {
-          await excalidrawAPIRef.current.updateLibrary({
+          await excalidrawAPI.updateLibrary({
             libraryItems: items,
-            prompt: false, // Don't prompt user to confirm
-            merge: false,  // We are providing the full list from storage
+            prompt: false,
+            merge: false,
           });
         }
       }
     } catch (err) {
       console.error("Error applying library from storage:", err);
     }
-  }, []);
+  }, [excalidrawAPI]);
 
-  // Listen for storage changes to sync library across tabs
   useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'excalidraw-library') {
-        applyLibraryFromStorage();
-      }
-    };
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
-  }, [applyLibraryFromStorage]);
+    if (excalidrawAPI) {
+      applyLibraryFromStorage();
+    }
+  }, [excalidrawAPI, applyLibraryFromStorage]);
 
-  // Subscribe to real-time file updates (for multi-user sync)
+  const searchParams = useSearchParams();
+  const isImportingRef = useRef(false);
+
+  // Handle library import from URL (?addLibrary=...)
+  useEffect(() => {
+    const addLibraryUrl = searchParams.get("addLibrary");
+    if (addLibraryUrl && excalidrawAPI && !isImportingRef.current) {
+      isImportingRef.current = true;
+      console.log("Importing external library from:", addLibraryUrl);
+      
+      const importLibrary = async () => {
+        try {
+          const response = await fetch(`/api/library-proxy?url=${encodeURIComponent(addLibraryUrl)}`);
+          if (!response.ok) throw new Error("Failed to fetch library via proxy");
+          
+          const data = await response.json();
+          const libraryItems = data.libraryItems || data.library || [];
+          
+          if (libraryItems.length > 0) {
+            await excalidrawAPI.updateLibrary({
+              libraryItems,
+              merge: true,
+            });
+            console.log(`Successfully imported ${libraryItems.length} library items`);
+            
+            // Save to localStorage so it persists
+            const currentLibrary = localStorage.getItem('excalidraw-library');
+            let newLibraryItems = libraryItems;
+            if (currentLibrary) {
+               try {
+                 const parsed = JSON.parse(currentLibrary);
+                 const existingItems = parsed.libraryItems || parsed.library || [];
+                 newLibraryItems = [...existingItems, ...libraryItems];
+               } catch (e) {}
+            }
+            localStorage.setItem('excalidraw-library', JSON.stringify({ libraryItems: newLibraryItems }));
+          }
+        } catch (error) {
+          console.error("Library import error:", error);
+        } finally {
+          // Remove the parameter from URL without refreshing
+          const url = new URL(window.location.href);
+          url.searchParams.delete("addLibrary");
+          window.history.replaceState({}, "", url.toString());
+          isImportingRef.current = false;
+        }
+      };
+      
+      importLibrary();
+    }
+  }, [searchParams, excalidrawAPI]);
+  const lastSavedWhiteboardRef = useRef<string>(fileData?.whiteboard || "");
+  const whiteBoardRef = useRef<any>();
+  const [isReady, setIsReady] = useState(false);
+
+  // Use local query for fresh updates
   const liveFileData = useQuery(api.files.getFilebyId, { _id: fileId });
   const savedImages = useQuery(api.excalidrawFiles.getFiles, { fileId });
   const addExcalidrawFile = useMutation(api.excalidrawFiles.addFile);
   const updateWhiteBoard = useMutation(api.files.updateWhiteboard);
 
-  // Sync images from backend to Excalidraw
   useEffect(() => {
-    if (savedImages && savedImages.length > 0 && excalidrawAPIRef.current) {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'excalidraw-library') applyLibraryFromStorage();
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [applyLibraryFromStorage]);
+
+  // Image sync
+  useEffect(() => {
+    if (savedImages && savedImages.length > 0 && excalidrawAPI) {
       const formattedFiles: any[] = savedImages.map((f: any) => ({
         id: f.excalidrawFileId,
         dataURL: f.dataURL,
@@ -94,264 +142,81 @@ const Canvas = ({
         created: f.created,
         status: "saved",
       }));
-      
-      // Delay slightly to ensure elements are ready
-      setTimeout(() => {
-        excalidrawAPIRef.current.addFiles(formattedFiles);
+      const timer = setTimeout(() => {
+        excalidrawAPI.addFiles(formattedFiles);
       }, 500);
+      return () => clearTimeout(timer);
     }
-  }, [savedImages]);
+  }, [savedImages, excalidrawAPI]);
 
-  // Update lastSaveTime whenever liveFileData changes
+  // Sync state with database
   useEffect(() => {
-    if (liveFileData?._ts) {
-      setLastSaveTime(new Date(liveFileData._ts));
-    }
-  }, [liveFileData?._ts]);
-
-
-  // Load saved library on mount
-  useEffect(() => {
-    const initLibrary = async () => {
-        // Wait for API to be ready
-        let retries = 0;
-        while (!excalidrawAPIRef.current && retries < 50) {
-          await new Promise(r => setTimeout(r, 100));
-          retries++;
-        }
-
-        if (excalidrawAPIRef.current) {
-          await applyLibraryFromStorage();
-        }
-    };
-    initLibrary();
-  }, [applyLibraryFromStorage]);
-
-  // Real-time sync: when another user updates the file, reload library AND canvas drawing
-  useEffect(() => {
-    if (!liveFileData || !excalidrawAPIRef.current) return;
-
-    // Always sync on first load, then check if it's our own save
-    if (!isFirstSyncRef.current && liveFileData.whiteboard === lastSavedWhiteboardRef.current) {
-      return;
-    }
-
-    isFirstSyncRef.current = false;
-
-    const syncCanvasFromFile = async () => {
-      try {
-        // Sync canvas drawing
-        if (liveFileData.whiteboard) {
-          try {
-            const fullData = JSON.parse(liveFileData.whiteboard);
-            const elementsToRestore = Array.isArray(fullData) ? fullData : fullData.elements || [];
-            
-            if (elementsToRestore.length > 0) {
-              excalidrawAPIRef.current.updateScene({ elements: elementsToRestore });
-            }
-          } catch (parseErr) {
-            console.error("Error parsing canvas data:", parseErr);
-          }
-        }
-
-        // Sync library from local storage (it might have been updated by another tab or import)
-        if (!isImportingRef.current) {
-           await applyLibraryFromStorage();
-        }
-      } catch (e) {
-        console.error("Error syncing canvas/library:", e);
-      }
-    };
-
-    syncCanvasFromFile();
-  }, [liveFileData, applyLibraryFromStorage]);
-
-  // Handle "Add to Excalidraw" deep-link from libs.excalidraw.com
-  useEffect(() => {
-    const addLibraryParam = searchParams.get("addLibrary");
-    if (!addLibraryParam || isImportingRef.current) return;
-
-    const attemptImport = async () => {
-      isImportingRef.current = true;
-      
-      // Poll until Excalidraw API is ready (mounted)
-      let retries = 0;
-      while (!excalidrawAPIRef.current && retries < 40) {
-        await new Promise((r) => setTimeout(r, 200));
-        retries++;
-      }
-      
-      if (!excalidrawAPIRef.current) {
-        toast.error("Canvas not ready. Please try again.");
-        isImportingRef.current = false;
-        return;
-      }
-
-      // Small additional delay to let Excalidraw internal library state settle
-      await new Promise(r => setTimeout(r, 500));
-
-      try {
-        const proxyUrl = `/api/library-proxy?url=${encodeURIComponent(addLibraryParam)}`;
-        
-        const res = await fetch(proxyUrl);
-        if (!res.ok) {
-          const errorText = await res.text();
-          throw new Error(`Proxy fetch failed: ${res.status} ${errorText}`);
-        }
-        const data = await res.json();
-
-        // Support both .excalidrawlib v1 (library) and v2 (libraryItems)
-        let newItemsRaw: any[] = [];
-        if (data.libraryItems && Array.isArray(data.libraryItems)) {
-          newItemsRaw = data.libraryItems;
-        } else if (data.library && Array.isArray(data.library)) {
-          newItemsRaw = data.library;
-        } else if (Array.isArray(data)) {
-          newItemsRaw = data;
-        } else if (data.elements && Array.isArray(data.elements)) {
-          newItemsRaw = [data];
-        }
-
-        if (!newItemsRaw || newItemsRaw.length === 0) {
-          toast.error("The selected library is empty or invalid.");
-          isImportingRef.current = false;
-          return;
-        }
-
-        // Standardize item structure
-        const validatedNewItems = newItemsRaw
-          .map((item: any, index: number) => {
-            try {
-              let elements = [];
-              let itemId = item.id || `lib-item-${Date.now()}-${index}`;
-              let itemName = item.name || `Imported Item ${index + 1}`;
-              
-              if (Array.isArray(item)) {
-                elements = item;
-              } else if (item?.elements && Array.isArray(item.elements)) {
-                elements = item.elements;
-              } else if (item?.id && item?.type) {
-                elements = [item];
-              } else {
-                return null;
-              }
-
-              const validatedElements = elements
-                .filter((el: any) => el && typeof el === 'object')
-                .map((el: any) => ({
-                    id: el.id || `el-${Date.now()}-${Math.random()}`,
-                    type: el.type || "freedraw",
-                    x: el.x ?? 0,
-                    y: el.y ?? 0,
-                    width: el.width ?? 100,
-                    height: el.height ?? 100,
-                    ...el,
-                  }));
-
-              if (validatedElements.length === 0) return null;
-
-              return {
-                id: itemId,
-                name: itemName,
-                elements: validatedElements,
-                status: "published",
-                created: Date.now(),
-              };
-            } catch (e) {
-              return null;
-            }
-          })
-          .filter(Boolean);
-
-        if (validatedNewItems.length === 0) {
-          throw new Error("Failed to validate any items in the library.");
-        }
-        
-        const excalidrawAPI = excalidrawAPIRef.current;
-
-        // Read from localStorage
-        let persistedItems: any[] = [];
+    if (liveFileData?.whiteboard !== undefined && excalidrawAPI) {
+      // If we haven't synced yet, or if DB changed remotely
+      if (!isReady || (liveFileData.whiteboard !== lastSavedWhiteboardRef.current)) {
         try {
-          const stored = localStorage.getItem('excalidraw-library');
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            persistedItems = parsed.libraryItems || parsed.library || [];
-          }
-        } catch (e) {
-          persistedItems = [];
-        }
-
-        const itemMap = new Map<string, any>();
-        persistedItems.forEach((item: any) => {
-          if (item?.id && item?.elements) itemMap.set(item.id, item);
-        });
-
-        validatedNewItems.forEach((item: any) => {
-          if (item?.id) {
-            itemMap.set(item.id, item); // Overwrite/Add
-          }
-        });
-
-        const allItems = Array.from(itemMap.values());
-        if (allItems.length > 0) {
-          localStorage.setItem('excalidraw-library', JSON.stringify({
-            libraryItems: allItems,
-            version: 2,
-            updatedAt: new Date().toISOString(),
-          }));
+          const parsed = liveFileData.whiteboard ? JSON.parse(liveFileData.whiteboard) : [];
           
-          await excalidrawAPI.updateLibrary({ 
-            libraryItems: allItems,
-            prompt: false,
-            openLibrary: true 
+          let elements = [];
+          let appState = {};
+
+          if (Array.isArray(parsed)) {
+            elements = parsed;
+          } else if (parsed && typeof parsed === "object") {
+            elements = parsed.elements || [];
+            appState = parsed.appState || {};
+          }
+
+          excalidrawAPI.updateScene({ 
+            elements,
+            appState: {
+              ...appState,
+              theme: canvasTheme // Keep the theme handled by our state
+            }
           });
           
-          // Re-open library panel just in case
-          setTimeout(() => {
-            if (typeof excalidrawAPI.openLibrary === 'function') {
-                excalidrawAPI.openLibrary();
-            }
-          }, 300);
+          lastSavedWhiteboardRef.current = liveFileData.whiteboard || "";
+          whiteBoardRef.current = elements;
+        } catch (e) {
+          console.error("Sync error:", e);
         }
+        setIsReady(true);
+      }
+    }
+  }, [liveFileData?.whiteboard, excalidrawAPI, isReady, canvasTheme]);
 
-        toast.success(`Imported ${validatedNewItems.length} item(s). Total library size: ${allItems.length}`);
+  const saveWhiteboard = useCallback((elements?: any, isAutoSave = false) => {
+    // PROTECT: Don't save if not ready to avoid overwriting with empty state
+    if (!isReady) return;
 
-        // Clean up URL using Next.js router to update hooks correctly
-        router.replace(pathname);
+    let elementsToSave = elements;
+    if (!elementsToSave && excalidrawAPI) {
+      elementsToSave = excalidrawAPI.getSceneElements();
+    }
+    if (!elementsToSave) {
+      elementsToSave = whiteBoardRef.current;
+    }
 
-        // If this tab was opened via a redirect from the library site,
-        // we can try to close it after a short delay since the original 
-        // tab will now have synced via the 'storage' event.
-        if (window.opener || window.history.length === 1) {
-          setTimeout(() => {
-            window.close();
-          }, 1500);
-        }
-      } catch (err: any) {
-        console.error("Library Import Error:", err);
-        toast.error(`Library error: ${err.message || "Unknown error"}`);
-      } finally {
-        isImportingRef.current = false;
+    if (!elementsToSave || !Array.isArray(elementsToSave)) return;
+
+    // Get current appState to save background color
+    const appState = excalidrawAPI?.getAppState() || {};
+    const sceneData = {
+      elements: elementsToSave,
+      appState: {
+        viewBackgroundColor: appState.viewBackgroundColor
       }
     };
 
-    attemptImport();
-  }, [searchParams]);
-
-  useEffect(() => {
-    whiteBoard && saveWhiteboard();
-  }, [onSaveTrigger]);
-
-  const saveWhiteboard = (elements?: any) => {
-    const dataToSave = elements || whiteBoard;
-    if (!dataToSave) return;
-
-    const whiteboardJson = JSON.stringify(dataToSave);
+    const whiteboardJson = JSON.stringify(sceneData);
+    
+    // Only skip if it's an auto-save and nothing changed.
+    if (isAutoSave && whiteboardJson === lastSavedWhiteboardRef.current) return;
+    
     lastSavedWhiteboardRef.current = whiteboardJson;
     
-    // Also extract and save any new files (images)
-    if (excalidrawAPIRef.current) {
-      const currentFiles = excalidrawAPIRef.current.getFiles();
+    if (excalidrawAPI) {
+      const currentFiles = excalidrawAPI.getFiles();
       Object.values(currentFiles).forEach((file: any) => {
         addExcalidrawFile({
           fileId,
@@ -369,35 +234,129 @@ const Canvas = ({
     })
       .then(() => {
         setLastSaveTime(new Date());
+        if (!isAutoSave || (elementsToSave && elementsToSave.some((el: any) => el.id.startsWith("ai-")))) {
+           toast.success(isAutoSave ? "AI Changes Saved" : "Canvas Saved");
+        }
       })
       .catch((err) => {
         console.error("❌ Save error:", err);
       });
-  };
+  }, [excalidrawAPI, fileId, user?.email, addExcalidrawFile, updateWhiteBoard, isReady]);
 
-  const libraryReturnUrl =
-    typeof window !== "undefined" ? window.location.href.split("?")[0] : "";
-  const canvasActions = {
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleAutoSave = useCallback((elements?: any) => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      saveWhiteboard(elements, true);
+    }, 2000);
+  }, [saveWhiteboard]);
+
+  useEffect(() => {
+    if (isReady) saveWhiteboard();
+  }, [onSaveTrigger, saveWhiteboard, isReady]);
+
+  const onChange = useCallback((els: any, state: any) => {
+    if (!isReady) return;
+    whiteBoardRef.current = els;
+    
+    // Check if elements or background color changed
+    const lastSaved = lastSavedWhiteboardRef.current;
+    let nothingChanged = false;
+    try {
+      if (lastSaved) {
+        const parsed = JSON.parse(lastSaved);
+        const lastElements = Array.isArray(parsed) ? parsed : (parsed.elements || []);
+        const lastBg = Array.isArray(parsed) ? undefined : parsed.appState?.viewBackgroundColor;
+        
+        // Use a simple JSON stringify for a deep comparison check
+        if (JSON.stringify(lastElements) === JSON.stringify(els) && lastBg === state.viewBackgroundColor) {
+          nothingChanged = true;
+        }
+      }
+    } catch (e) {}
+
+    if (!nothingChanged) {
+       const hasAINewElements = els.some((el: any) => el.id.startsWith("ai-") && !lastSaved.includes(el.id));
+       if (hasAINewElements) {
+         saveWhiteboard(els);
+       } else {
+         handleAutoSave(els);
+       }
+    }
+  }, [saveWhiteboard, handleAutoSave, isReady]);
+
+  // Unmount protection
+  useEffect(() => {
+    return () => {
+      if (isReady && whiteBoardRef.current && whiteBoardRef.current.length > 0) {
+        saveWhiteboard(whiteBoardRef.current);
+      }
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [saveWhiteboard, isReady]);
+
+  const canvasActions = useMemo(() => ({
     export: false,
     loadScene: false,
     saveAsImage: false,
-  } as const;
+  }), []);
 
-  const sharedProps = {
-    excalidrawAPI: onExcalidrawAPI,
-    libraryReturnUrl,
-    UIOptions: {
-      canvasActions,
-    },
-    onChange: (els: any) => {
-      setWhiteBoard(els);
-      // Auto-save when AI-generated elements are added
-      const hasAINewElements = els.some((el: any) => el.id.startsWith("ai-") && !lastSavedWhiteboardRef.current.includes(el.id));
-      if (hasAINewElements) {
-        saveWhiteboard(els);
+  const libraryReturnUrl = useMemo(() => 
+    typeof window !== "undefined" ? window.location.href.split("?")[0] : ""
+  , []);
+
+  const excalidrawChildren = useMemo(() => (
+    <>
+      <MainMenu>
+        <MainMenu.DefaultItems.ClearCanvas />
+        <MainMenu.DefaultItems.Help />
+        <MainMenu.DefaultItems.ChangeCanvasBackground />
+      </MainMenu>
+      <WelcomeScreen>
+        <WelcomeScreen.Hints.MenuHint />
+        <WelcomeScreen.Hints.ToolbarHint />
+        <WelcomeScreen.Hints.HelpHint />
+      </WelcomeScreen>
+    </>
+  ), []);
+
+  const getExcalidrawAPI = useCallback(() => excalidrawAPI, [excalidrawAPI]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+        event.preventDefault();
+        saveWhiteboard();
       }
-    },
-  };
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [saveWhiteboard]);
+
+  // Initial Data for very first paint
+  const initialData = useMemo(() => {
+    if (fileData?.whiteboard) {
+      try {
+        const parsed = JSON.parse(fileData.whiteboard);
+        if (Array.isArray(parsed)) {
+          return { 
+            elements: parsed,
+            appState: { theme: canvasTheme }
+          };
+        } else {
+          return {
+            elements: parsed.elements || [],
+            appState: { 
+              ...parsed.appState,
+              theme: canvasTheme 
+            }
+          };
+        }
+      } catch (e) {}
+    }
+    return { elements: [], appState: { theme: canvasTheme } };
+  }, [fileData?.whiteboard, canvasTheme]);
 
   return (
     <div className="h-full w-full flex flex-col">
@@ -407,38 +366,17 @@ const Canvas = ({
         </div>
       )}
       <div className="flex-1 relative">
-      <AIPromptDialog getExcalidrawAPI={() => excalidrawAPIRef.current} />
-      {fileData && fileData.whiteboard ? (
+        <AIPromptDialog getExcalidrawAPI={getExcalidrawAPI} />
         <Excalidraw
           theme={canvasTheme}
-          {...sharedProps}
-          initialData={{ elements: JSON.parse(fileData.whiteboard) }}
+          excalidrawAPI={onExcalidrawAPI}
+          libraryReturnUrl={libraryReturnUrl}
+          UIOptions={{ canvasActions }}
+          onChange={onChange}
+          initialData={initialData}
         >
-          <MainMenu>
-            <MainMenu.DefaultItems.ClearCanvas />
-            <MainMenu.DefaultItems.Help />
-            <MainMenu.DefaultItems.ChangeCanvasBackground />
-          </MainMenu>
-          <WelcomeScreen>
-            <WelcomeScreen.Hints.MenuHint />
-            <WelcomeScreen.Hints.ToolbarHint />
-            <WelcomeScreen.Hints.HelpHint />
-          </WelcomeScreen>
+          {excalidrawChildren}
         </Excalidraw>
-      ) : (
-        <Excalidraw theme={canvasTheme} {...sharedProps}>
-          <MainMenu>
-            <MainMenu.DefaultItems.ClearCanvas />
-            <MainMenu.DefaultItems.Help />
-            <MainMenu.DefaultItems.ChangeCanvasBackground />
-          </MainMenu>
-          <WelcomeScreen>
-            <WelcomeScreen.Hints.MenuHint />
-            <WelcomeScreen.Hints.ToolbarHint />
-            <WelcomeScreen.Hints.HelpHint />
-          </WelcomeScreen>
-        </Excalidraw>
-      )}
       </div>
     </div>
   );

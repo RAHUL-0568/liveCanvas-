@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 
@@ -10,12 +10,30 @@ export const createNewFile = mutation({
     archieved: v.boolean(),
     document: v.string(),
     whiteboard: v.string(),
+    folderId: v.optional(v.id("folders")),
   },
   handler: async (ctx, args) => {
+    // Check for duplicate name in the same folder
+    const existingFile = await ctx.db
+      .query("files")
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("teamId"), args.teamId),
+          q.eq(q.field("folderId"), args.folderId),
+          q.eq(q.field("fileName"), args.fileName)
+        )
+      )
+      .first();
+
+    if (existingFile) {
+      throw new ConvexError(`A file named "${args.fileName}" already exists here.`);
+    }
+
     return await ctx.db.insert("files", {
       ...args,
       isPrivate: false,
       contributors: [args.createdBy],
+      lastAccessed: Date.now(),
     });
   },
 });
@@ -30,21 +48,61 @@ export const toggleFilePrivacy = mutation({
   },
 });
 
+export const moveFileToFolder = mutation({
+  args: {
+    _id: v.id("files"),
+    folderId: v.optional(v.id("folders")),
+  },
+  handler: async (ctx, args) => {
+    const fileToMove = await ctx.db.get(args._id);
+    if (!fileToMove) {
+      throw new ConvexError("File not found");
+    }
+
+    // Check if a file with the same name already exists in the destination folder
+    const existingFile = await ctx.db
+      .query("files")
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("teamId"), fileToMove.teamId),
+          q.eq(q.field("folderId"), args.folderId),
+          q.eq(q.field("fileName"), fileToMove.fileName)
+        )
+      )
+      .first();
+
+    if (existingFile && existingFile._id !== args._id) {
+      throw new ConvexError(`A file named "${fileToMove.fileName}" already exists in the destination.`);
+    }
+
+    return await ctx.db.patch(args._id, { folderId: args.folderId });
+  },
+});
+
 export const getFiles = query({
   args: {
     teamId: v.string(),
     email: v.optional(v.string()),
     type: v.optional(v.string()), // 'team', 'shared', 'all'
+    folderId: v.optional(v.id("folders")),
   },
   handler: async (ctx, args) => {
     const type = args.type || "all";
     let files: any[] = [];
 
     if (type === "team" || type === "all") {
-      const teamFiles = await ctx.db
+      let query = ctx.db
         .query("files")
-        .filter((q) => q.eq(q.field("teamId"), args.teamId))
-        .collect();
+        .filter((q) => q.eq(q.field("teamId"), args.teamId));
+      
+      if (args.folderId) {
+        query = query.filter((q) => q.eq(q.field("folderId"), args.folderId));
+      } else if (type === "team") {
+        // Only show root files if specifically looking at team files without a folder
+        query = query.filter((q) => q.eq(q.field("folderId"), undefined));
+      }
+
+      const teamFiles = await query.collect();
       files = [...files, ...teamFiles];
     }
 
@@ -62,8 +120,8 @@ export const getFiles = query({
     const uniqueFiles = Array.from(new Map(files.map(f => [f._id, f])).values());
     files = uniqueFiles;
 
-    // Sort by creation time descending
-    files.sort((a: any, b: any) => b._creationTime - a._creationTime);
+    // Sort by last accessed time descending (Fall back to creation time for older files)
+    files.sort((a: any, b: any) => (b.lastAccessed || b._creationTime) - (a.lastAccessed || a._creationTime));
 
     return Promise.all(
       files.map(async (file) => {
@@ -112,7 +170,8 @@ export const updateDocument = mutation({
 
     return await ctx.db.patch(args._id, { 
       document: args.document,
-      contributors: contributors
+      contributors: contributors,
+      lastAccessed: Date.now(),
     });
   },
 });
@@ -134,8 +193,26 @@ export const updateWhiteboard = mutation({
 
     return await ctx.db.patch(args._id, { 
       whiteboard: args.whiteboard,
-      contributors: contributors
+      contributors: contributors,
+      lastAccessed: Date.now(),
     });
+  },
+});
+
+export const updateLastAccessed = mutation({
+  args: { _id: v.id("files") },
+  handler: async (ctx, args) => {
+    const file = await ctx.db.get(args._id);
+    if (!file) return;
+
+    const now = Date.now();
+    const lastUpdate = file.lastAccessed || 0;
+    
+    // Only update if it's been more than 5 minutes since the last update
+    // This prevents infinite loops and redundant writes while still keeping "Recent" data fresh enough
+    if (now - lastUpdate > 5 * 60 * 1000) {
+       await ctx.db.patch(args._id, { lastAccessed: now });
+    }
   },
 });
 
@@ -237,6 +314,25 @@ export const updateFileName = mutation({
     fileName: v.string(),
   },
   handler: async (ctx, args) => {
+    const file = await ctx.db.get(args._id);
+    if (!file) throw new ConvexError("File not found");
+
+    // Check if another file with the same name exists in the same folder
+    const existingFile = await ctx.db
+      .query("files")
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("teamId"), file.teamId),
+          q.eq(q.field("folderId"), file.folderId),
+          q.eq(q.field("fileName"), args.fileName)
+        )
+      )
+      .first();
+
+    if (existingFile && existingFile._id !== args._id) {
+      throw new ConvexError(`A file named "${args.fileName}" already exists in this folder.`);
+    }
+
     return await ctx.db.patch(args._id, { fileName: args.fileName });
   },
 });
