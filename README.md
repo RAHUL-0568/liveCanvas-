@@ -71,6 +71,4 @@ LiveCanvas is a modern, high-performance collaborative whiteboard application de
 
 Open [http://localhost:3000](http://localhost:3000) to start collaborating.
 
-## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
