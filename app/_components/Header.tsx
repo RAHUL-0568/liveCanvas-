@@ -29,9 +29,13 @@ const Header = () => {
   return (
     <header className="z-50 w-full fixed backdrop-blur-xl border-b border-border/50 bg-background/85">
       <div className="mx-auto flex h-16 max-w-screen-xl items-center gap-8 px-4 sm:px-6 lg:px-8">
-        <a className="flex gap-2 items-center" href="/">
-          <Command className="text-primary" size={28} />
-          <p className="text-foreground font-semibold">LiveCanvas</p>
+        <a className="flex gap-2.5 items-center group" href="/">
+          <div className="p-1.5 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
+            <Command className="text-primary" size={24} />
+          </div>
+          <p className="text-foreground font-bold text-lg tracking-tight bg-clip-text">
+            Live<span className="text-primary">Canvas</span>
+          </p>
         </a>
 
         <div className="flex flex-1 items-center justify-end md:justify-between">

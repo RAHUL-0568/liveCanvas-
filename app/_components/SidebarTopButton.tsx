@@ -121,13 +121,15 @@ const SidebarTopButton = ({ user, setActiveTeamInfo }: any) => {
       <DropdownMenuTrigger asChild className="outline-none">
         <div
           className={cn(
-            "flex items-center w-fit hover:bg-accent hover:text-accent-foreground gap-2 cursor-pointer rounded-md px-2 mt-4 ml-2 transition-colors",
-            { "bg-accent text-accent-foreground": isOpen }
+            "flex items-center w-fit hover:bg-accent hover:text-accent-foreground gap-2.5 cursor-pointer rounded-lg p-2 mt-4 ml-2 transition-all border border-transparent hover:border-border/50",
+            { "bg-accent text-accent-foreground border-border": isOpen }
           )}
         >
-          <Command className="text-primary" size={28} />
-          <h2 className="text-sm font-semibold text-foreground truncate max-w-[120px]">{activeTeam?.teamName || "Select Team"}</h2>
-          <ChevronDown size={16} className="text-muted-foreground" />
+          <div className="p-1 bg-primary/10 rounded-md">
+            <Command className="text-primary" size={20} />
+          </div>
+          <h2 className="text-sm font-bold text-foreground truncate max-w-[120px]">{activeTeam?.teamName || "Select Team"}</h2>
+          <ChevronDown size={14} className="text-muted-foreground ml-1" />
         </div>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="bg-popover gap-1 rounded-lg text-popover-foreground border-border w-60 ml-4 mt-2 shadow-xl">

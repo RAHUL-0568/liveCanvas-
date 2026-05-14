@@ -26,7 +26,7 @@ const DashboardPage = () => {
     return {
       email: user.email || "",
       name: name,
-      image: convexUser?.image || user.photoURL
+      image: convexUser?.image || (user.photoURL?.includes("graph.facebook.com") ? `${user.photoURL}?type=large` : user.photoURL)
     };
   }, [user, convexUser]);
 
@@ -36,12 +36,19 @@ const DashboardPage = () => {
     }
   }, [user]);
 
+  const updateUserImage = useMutation(api.user.updateUserImage);
+
   const checkUser = async () => {
     if (!user?.email) return;
 
     const result = await convex.query(api.user.getUser, {
       email: user.email,
     });
+    
+    let photoURL = user.photoURL;
+    if (photoURL?.includes("graph.facebook.com")) {
+      photoURL = `${photoURL}?type=large`;
+    }
     
     if (!result.length) {
       const defaultName = user.email ? user.email.split("@")[0] : "User";
@@ -52,10 +59,21 @@ const DashboardPage = () => {
       createUser({
         name: `${firstName} ${lastName}`.trim(),
         email: user.email,
-        image: user.photoURL ?? "https://img.freepik.com/free-vector/graphic-designer-man_78370-159.jpg?size=626&ext=jpg&ga=GA1.1.1395880969.1709251200&semt=ais",
-      }).then((res) => {
-        // User created successfully
+        image: photoURL ?? "https://img.freepik.com/free-vector/graphic-designer-man_78370-159.jpg?size=626&ext=jpg&ga=GA1.1.1395880969.1709251200&semt=ais",
       });
+    } else {
+      // If user exists, sync the profile picture ONLY if it's currently the default placeholder
+      // and we have a better one from Firebase. This prevents overwriting custom uploads.
+      const existingUser = result[0];
+      const defaultImage = "https://img.freepik.com/free-vector/graphic-designer-man_78370-159.jpg";
+      const isDefault = !existingUser.image || existingUser.image.includes(defaultImage);
+      
+      if (isDefault && photoURL && existingUser.image !== photoURL) {
+        updateUserImage({
+          email: user.email,
+          image: photoURL,
+        });
+      }
     }
   };
 
